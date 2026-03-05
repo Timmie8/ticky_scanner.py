@@ -2,12 +2,14 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
-import re
 import pandas as pd
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="StockConsultant Dashboard", layout="wide")
+st.set_page_config(page_title="StockConsultant Pro Scanner", layout="wide")
 
 @st.cache_resource
 def get_driver():
@@ -19,80 +21,80 @@ def get_driver():
     service = Service("/usr/bin/chromedriver")
     return webdriver.Chrome(service=service, options=options)
 
-def scrape_stock_data(driver, symbol):
-    """Haalt de data op van StockConsultant voor een specifiek symbool."""
+def get_stock_data(driver, symbol):
+    """Haalt gericht data op uit de tabellen van StockConsultant."""
     url = f"https://www.stockconsultant.com/consultnow/basicplus.cgi?symbol={symbol}&extot=1&searcht=1&srng=0,10&charts=1&fselect=sscroll#lsearch"
     
     try:
         driver.get(url)
-        time.sleep(4) # Wacht op het laden van de rapporten
+        # Wacht maximaal 10 seconden tot de body geladen is
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        time.sleep(5) # Extra tijd voor de CGI scripts van de site
         
-        page_text = driver.find_element("tag name", "body").text
+        full_text = driver.find_element(By.TAG_NAME, "body").text
         
-        # We zoeken naar veelvoorkomende patronen op StockConsultant
-        # Score extractie: we zoeken naar getallen in de buurt van 'Score' of 'Rating'
-        score_match = re.search(r"(?:Score|Rating|Strength):\s*(\d+\.?\d*)", page_text, re.IGNORECASE)
-        score = score_match.group(1) if score_match else "N/A"
-        
-        # Sentiment extractie (Bullish / Bearish)
+        # We zoeken naar specifieke trefwoorden in de tekst
+        # StockConsultant gebruikt vaak 'Technical Score' of 'Breakout Score'
+        score = "N/A"
+        if "Score" in full_text:
+            # We pakken een stukje tekst rondom het woord Score
+            parts = full_text.split("Score")
+            if len(parts) > 1:
+                # Pak de eerste 10 karakters na 'Score' en filter het getal eruit
+                score_chunk = parts[1][:10]
+                import re
+                nums = re.findall(r"(\d+\.?\d*)", score_chunk)
+                score = nums[0] if nums else "N/A"
+
+        # Sentiment bepaling
         sentiment = "Neutral"
-        if "Bullish" in page_text: sentiment = "Bullish 📈"
-        if "Bearish" in page_text: sentiment = "Bearish 📉"
-        
+        if "BULLISH" in full_text.upper(): sentiment = "Bullish 📈"
+        if "BEARISH" in full_text.upper(): sentiment = "Bearish 📉"
+
         return {
             "Symbool": symbol,
             "Score": score,
             "Sentiment": sentiment,
-            "Status": "Succes"
+            "Link": url
         }
     except Exception as e:
-        return {"Symbool": symbol, "Score": "Error", "Sentiment": "Error", "Status": f"Fout: {str(e)[:30]}"}
+        return {"Symbool": symbol, "Score": "Fout", "Sentiment": str(e)[:20], "Link": url}
 
 # --- UI ---
-st.title("📊 Multi-Stock Consultant Dashboard")
-st.markdown("Voer meerdere symbolen in om ze tegelijkertijd te scannen.")
+st.title("🚀 StockConsultant Batch Scanner")
+st.write("Voer de symbolen in die je wilt controleren.")
 
-# Input voor meerdere aandelen
-input_symbols = st.text_input("Voer symbolen in (bijv: PAYO, TSLA, NVDA):", "PAYO")
-symbols = [s.strip().upper() for s in input_symbols.split(",") if s.strip()]
+input_symbols = st.text_input("Symbolen (scheid met komma's):", "PAYO, TSLA, AAPL")
+symbol_list = [s.strip().upper() for s in input_symbols.split(",") if s.strip()]
 
-if st.button("Start Batch Scan"):
+if st.button("Start Analyse"):
     driver = get_driver()
     results = []
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    for i, sym in enumerate(symbols):
-        status_text.text(f"Bezig met scannen van {sym} ({i+1}/{len(symbols)})...")
-        data = scrape_stock_data(driver, sym)
+    for idx, sym in enumerate(symbol_list):
+        status_text.text(f"Bezig met ophalen van {sym}...")
+        data = get_stock_data(driver, sym)
         results.append(data)
-        progress_bar.progress((i + 1) / len(symbols))
+        progress_bar.progress((idx + 1) / len(symbol_list))
     
     status_text.text("Scan voltooid!")
     
-    # Maak een mooie tabel (DataFrame)
+    # Resultaten tonen
     df = pd.DataFrame(results)
-    
-    # Tonen van de resultaten in het dashboard
     st.divider()
-    st.subheader("Overzicht Resultaten")
     
-    # Styling van de tabel
-    def color_sentiment(val):
-        color = 'white'
-        if 'Bullish' in str(val): color = '#00ff88'
-        elif 'Bearish' in str(val): color = '#ff4b4b'
-        return f'color: {color}'
-
-    st.table(df.style.applymap(color_sentiment, subset=['Sentiment']))
+    # Tabel met styling
+    st.dataframe(df, use_container_width=True)
     
-    # Download knop voor Excel/CSV
+    # Download optie
     csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download resultaten als CSV", csv, "stock_results.csv", "text/csv")
-
+    st.download_button("Download als CSV", csv, "stocks.csv", "text/csv")
 else:
-    st.info("Klik op 'Start Batch Scan' om de gegevens op te halen.")
+    st.info("Vul symbolen in en klik op de knop.")
 
 st.divider()
-st.caption("Bron: StockConsultant BasicPlus | Gebouwd met Selenium & Streamlit")
+st.caption("Opmerking: Deze tool werkt het beste als de symbolen correct zijn gespeld.")
+
