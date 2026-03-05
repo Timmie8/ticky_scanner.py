@@ -18,31 +18,32 @@ def get_driver():
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     options.binary_location = "/usr/bin/chromium"
     service = Service("/usr/bin/chromedriver")
     return webdriver.Chrome(service=service, options=options)
 
 def get_detailed_stock_data(driver, symbol):
-    """Haalt Score, Sentiment, Support, Resistance en Trade Quality op."""
+    """Haalt Score, Trade Quality, Sentiment, Support en Resistance op."""
     url = f"https://www.stockconsultant.com/consultnow/basicplus.cgi?symbol={symbol}&extot=1&searcht=1&srng=0,10&charts=1&fselect=sscroll#lsearch"
     
     try:
         driver.get(url)
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(6) # Genoeg tijd voor de CGI scripts en tabellen
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        time.sleep(6) # Cruciaal voor het laden van de CGI rapporten
         
         full_text = driver.find_element(By.TAG_NAME, "body").text
         
-        # --- DATA EXTRACTIE LOGICA ---
+        # --- DATA EXTRACTIE ---
         
-        # 1. Score (Meestal Technical Score)
+        # 1. Technical Score (0-100 of 0-10)
         score = "N/A"
-        score_match = re.search(r"Score[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
+        score_match = re.search(r"(?:Technical Score|Score)[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
         if score_match: score = score_match.group(1)
 
-        # 2. Trade Quality (Vaak aangeduid als 'Quality' of 'Trade Quality')
+        # 2. Trade Quality
         quality = "N/A"
-        quality_match = re.search(r"Quality[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
+        quality_match = re.search(r"(?:Trade Quality|Quality)[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
         if quality_match: quality = quality_match.group(1)
 
         # 3. Sentiment
@@ -71,31 +72,8 @@ def get_detailed_stock_data(driver, symbol):
 
 # --- UI DASHBOARD ---
 st.title("🚀 Advanced Stock Scanner")
-st.markdown("Analyseer Score, Trade Quality en Prijsniveaus van StockConsultant.")
+st.markdown("Analyseer de technische staat van je aandelen via StockConsultant.")
 
-input_symbols = st.text_input("Voer symbolen in (scheid met komma's):", "PAYO, TSLA, AAPL")
-symbol_list = [s.strip().upper() for s in input_symbols.split(",") if s.strip()]
-
-if st.button("Start Volledige Analyse"):
-    driver = get_driver()
-    all_results = []
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for idx, sym in enumerate(symbol_list):
-        status_text.text(f"Bezig met scannen van {sym}...")
-        data = get_detailed_stock_data(driver, sym)
-        all_results.append(data)
-        progress_bar.progress((idx + 1) / len(symbol_list))
-    
-    status_text.text("Analyse voltooid!")
-    
-    # DataFrame maken
-    df = pd.DataFrame(all_results)
-    st.divider()
-    
-    # Tabel tonen met interactieve functies
-    st.subheader("Overzicht Marktan
+#
 
 
