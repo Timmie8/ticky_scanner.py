@@ -9,10 +9,9 @@ import time
 import re
 import pandas as pd
 
-# --- 1. PAGINA CONFIGURATIE (Altijd bovenaan) ---
-st.set_page_config(page_title="StockConsultant Pro Dashboard", layout="wide")
+# --- CONFIGURATIE ---
+st.set_page_config(page_title="Stock Scanner Pro", layout="wide")
 
-# --- 2. BROWSER SETUP FUNCTIE ---
 @st.cache_resource
 def get_driver():
     options = Options()
@@ -20,69 +19,58 @@ def get_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    # Vermom de bot als een echte browser
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
     options.binary_location = "/usr/bin/chromium"
     service = Service("/usr/bin/chromedriver")
     return webdriver.Chrome(service=service, options=options)
 
 def get_detailed_stock_data(driver, symbol):
-    """Haalt alle technische data op van StockConsultant."""
     url = f"https://www.stockconsultant.com/consultnow/basicplus.cgi?symbol={symbol}&extot=1&searcht=1&srng=0,10&charts=1&fselect=sscroll#lsearch"
     
     try:
+        # Stel een harde timeout in voor het laden van de pagina zelf
+        driver.set_page_load_timeout(20)
         driver.get(url)
-        # Wacht tot de pagina geladen is
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(6) 
+        
+        # Wacht tot de body er is, maar maximaal 10 seconden
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        
+        # Korte pauze voor de dynamische tabellen
+        time.sleep(4) 
         
         full_text = driver.find_element(By.TAG_NAME, "body").text
         
-        # --- DATA EXTRACTIE ---
-        # Score
-        score = "N/A"
-        score_match = re.search(r"(?:Score|Technical Score)[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
-        if score_match: score = score_match.group(1)
+        # Data Extractie met Regex
+        score = re.search(r"(?:Score|Technical Score)[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
+        quality = re.search(r"(?:Quality|Trade Quality)[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
+        support = re.search(r"support\s+(?:at|is)\s+([\d\.]+)", full_text, re.IGNORECASE)
+        resistance = re.search(r"resistance\s+(?:at|is)\s+([\d\.]+)", full_text, re.IGNORECASE)
 
-        # Trade Quality
-        quality = "N/A"
-        quality_match = re.search(r"(?:Quality|Trade Quality)[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
-        if quality_match: quality = quality_match.group(1)
-
-        # Sentiment
         sentiment = "Neutral"
         if "BULLISH" in full_text.upper(): sentiment = "Bullish 📈"
         elif "BEARISH" in full_text.upper(): sentiment = "Bearish 📉"
 
-        # Support & Resistance
-        support = "N/A"
-        resistance = "N/A"
-        sup_match = re.search(r"support\s+(?:at|is)\s+([\d\.]+)", full_text, re.IGNORECASE)
-        res_match = re.search(r"resistance\s+(?:at|is)\s+([\d\.]+)", full_text, re.IGNORECASE)
-        if sup_match: support = sup_match.group(1)
-        if res_match: resistance = res_match.group(1)
-
         return {
             "Symbool": symbol,
-            "Score": score,
-            "Trade Quality": quality,
+            "Score": score.group(1) if score else "N/A",
+            "Trade Quality": quality.group(1) if quality else "N/A",
             "Sentiment": sentiment,
-            "Support": support,
-            "Resistance": resistance
+            "Support": support.group(1) if support else "N/A",
+            "Resistance": resistance.group(1) if resistance else "N/A"
         }
     except Exception as e:
-        return {"Symbool": symbol, "Score": "Error", "Trade Quality": "Error", "Sentiment": "Error", "Support": "-", "Resistance": "-"}
+        return {"Symbool": symbol, "Score": "Timeout/Error", "Trade Quality": "-", "Sentiment": "N/A", "Support": "-", "Resistance": "-"}
 
-# --- 3. UI DASHBOARD (Zichtbare gedeelte) ---
-st.title("🚀 Stock Analysis Dashboard")
-st.markdown("Vul hieronder de symbolen in die je wilt analyseren.")
+# --- UI ---
+st.title("🛡️ StockConsultant Batch Analysis")
 
-# HET INVOERVELD (Nu gegarandeerd zichtbaar)
-input_symbols = st.text_input("Aandelen (bijv: PAYO, TSLA, NVDA):", "PAYO")
+input_symbols = st.text_input("Voer symbolen in (gescheiden door komma):", "PAYO, TSLA")
 symbol_list = [s.strip().upper() for s in input_symbols.split(",") if s.strip()]
 
-# De Analyse Knop
 if st.button("Start Analyse"):
     if not symbol_list:
-        st.warning("Voer a.u.b. minimaal één symbool in.")
+        st.error("Voer eerst symbolen in.")
     else:
         driver = get_driver()
         all_results = []
@@ -91,24 +79,19 @@ if st.button("Start Analyse"):
         status_text = st.empty()
         
         for idx, sym in enumerate(symbol_list):
-            status_text.text(f"Bezig met scannen van {sym}...")
+            status_text.text(f"Scannen: {sym} ({idx+1}/{len(symbol_list)})...")
             data = get_detailed_stock_data(driver, sym)
             all_results.append(data)
             progress_bar.progress((idx + 1) / len(symbol_list))
         
-        status_text.text("✅ Klaar! Resultaten staan hieronder.")
-        
-        # Resultaten in Tabel
+        status_text.text("✅ Scan voltooid!")
         df = pd.DataFrame(all_results)
-        st.divider()
-        st.subheader("Marktanalyse Overzicht")
         st.dataframe(df, use_container_width=True)
-
-        # Download Knop
+        
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download als CSV", csv, "stock_report.csv", "text/csv")
+        st.download_button("Download CSV", csv, "report.csv", "text/csv")
 else:
-    st.info("Klik op de knop om de gegevens van StockConsultant op te halen.")
+    st.info("Wachtend op start...")
 
 st.divider()
-st.caption("Draait op Selenium/Chromium via Streamlit Cloud.")
+st.caption("Gebruik kleine batches (max 5-10) voor de beste snelheid op Streamlit Cloud.")
