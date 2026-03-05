@@ -6,7 +6,7 @@ import time
 import re
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Ticky Dashboard", layout="centered")
+st.set_page_config(page_title="Ticky 0-100 Scanner", layout="centered")
 
 @st.cache_resource
 def get_driver():
@@ -19,63 +19,72 @@ def get_driver():
     service = Service("/usr/bin/chromedriver")
     return webdriver.Chrome(service=service, options=options)
 
-def extract_score(text):
+def extract_ticky_100(text):
     """
-    Zoekt naar een getal in de tekst (bijv. '7.5' of '-2.1').
+    Zoekt specifiek naar het getal achter 'Score:' of 'SCORE:' in de tekst.
     """
-    # Zoek naar getallen (ook negatief en met decimalen)
-    numbers = re.findall(r"[-+]?\d*\.\d+|\d+", text)
-    if numbers:
-        return float(numbers[0])
+    # Zoekt naar 'Score:' gevolgd door een getal (0-100)
+    match = re.search(r"Score:\s*(\d+\.?\d*)", text, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
     return None
 
 # --- UI ---
-st.title("📈 Ticky Score Dashboard")
-symbol = st.text_input("Voer symbool in (bijv. TSLA):", "").upper()
+st.title("🎯 Ticky Score (0-100) Dashboard")
+st.markdown("Voer een symbool in om de Trade-Ideas score te analyseren.")
+
+symbol = st.text_input("Aandeel Symbool:", placeholder="Bijv. NVDA").upper()
 
 if symbol:
     try:
         driver = get_driver()
-        with st.spinner(f"Analyseert {symbol}..."):
+        with st.spinner(f"Bezig met scannen van {symbol}..."):
             url = f"https://www.trade-ideas.com/ticky/ticky.html?symbol={symbol}"
             driver.get(url)
+            
+            # Trade-Ideas heeft tijd nodig om de score te berekenen via JS
             time.sleep(5) 
             
             page_content = driver.find_element("tag name", "body").text
-            score = extract_score(page_content)
+            score = extract_ticky_100(page_content)
 
             if score is not None:
+                st.divider()
                 st.subheader(f"Resultaat voor {symbol}")
                 
-                # Kleur bepalen op basis van score
-                color = "normal"
-                if score > 2:
-                    color = "inverse" # Groenachtig in Streamlit
-                elif score < -2:
-                    color = "off" # Roodachtig/Grijs
+                # Visualisatie van de 0-100 score
+                col1, col2 = st.columns([1, 2])
                 
-                # De mooie Dashboard Widget
-                col1, col2 = st.columns(2)
-                col1.metric(label="Ticky Score", value=f"{score}", delta=score)
+                with col1:
+                    st.metric(label="Huidige Score", value=f"{score}/100")
                 
-                # Visuele indicator
-                if score > 0:
-                    st.success(f"De sentiment score voor {symbol} is Positief.")
+                with col2:
+                    # Bepaal kleur van de balk (Groen boven 70, Oranje boven 40, Rood daaronder)
+                    st.write("Sentiment Sterkte:")
+                    st.progress(score / 100)
+                
+                # Interpretatie van de score
+                if score >= 70:
+                    st.success(f"🔥 Sterk positief sentiment ({score})")
+                elif score >= 40:
+                    st.warning(f"⚖️ Neutraal tot gematigd sentiment ({score})")
                 else:
-                    st.error(f"De sentiment score voor {symbol} is Negatief.")
-                
-                with st.expander("Bekijk ruwe data"):
-                    st.write(page_content)
+                    st.error(f"❄️ Zwak sentiment ({score})")
+
+                with st.expander("Bekijk volledige brontekst"):
+                    st.code(page_content)
             else:
-                st.warning("Pagina geladen, maar geen score kunnen extraheren.")
-                st.write("Ruwe tekst gevonden:", page_content)
+                st.error("Kon de 'Score: XX' niet vinden in de data.")
+                st.info("Ruwe data ontvangen:")
+                st.text(page_content)
                 
     except Exception as e:
-        st.error("Er is een fout opgetreden.")
+        st.error("Er is een technisch probleem opgetreden.")
         st.exception(e)
 else:
-    st.info("Voer een symbool in om de live score te zien.")
+    st.info("Typ een symbool en druk op Enter.")
 
 st.divider()
-st.caption("Data afkomstig van Trade-Ideas Ticky Tool")
+st.caption("Gebouwd voor Trade-Ideas data-extractie via Selenium.")
+
 
