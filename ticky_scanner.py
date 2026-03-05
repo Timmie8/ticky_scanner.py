@@ -6,10 +6,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
+import re
 import pandas as pd
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="StockConsultant Pro Scanner", layout="wide")
+st.set_page_config(page_title="StockConsultant Pro Dashboard", layout="wide")
 
 @st.cache_resource
 def get_driver():
@@ -21,80 +22,80 @@ def get_driver():
     service = Service("/usr/bin/chromedriver")
     return webdriver.Chrome(service=service, options=options)
 
-def get_stock_data(driver, symbol):
-    """Haalt gericht data op uit de tabellen van StockConsultant."""
+def get_detailed_stock_data(driver, symbol):
+    """Haalt Score, Sentiment, Support, Resistance en Trade Quality op."""
     url = f"https://www.stockconsultant.com/consultnow/basicplus.cgi?symbol={symbol}&extot=1&searcht=1&srng=0,10&charts=1&fselect=sscroll#lsearch"
     
     try:
         driver.get(url)
-        # Wacht maximaal 10 seconden tot de body geladen is
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(5) # Extra tijd voor de CGI scripts van de site
+        time.sleep(6) # Genoeg tijd voor de CGI scripts en tabellen
         
         full_text = driver.find_element(By.TAG_NAME, "body").text
         
-        # We zoeken naar specifieke trefwoorden in de tekst
-        # StockConsultant gebruikt vaak 'Technical Score' of 'Breakout Score'
+        # --- DATA EXTRACTIE LOGICA ---
+        
+        # 1. Score (Meestal Technical Score)
         score = "N/A"
-        if "Score" in full_text:
-            # We pakken een stukje tekst rondom het woord Score
-            parts = full_text.split("Score")
-            if len(parts) > 1:
-                # Pak de eerste 10 karakters na 'Score' en filter het getal eruit
-                score_chunk = parts[1][:10]
-                import re
-                nums = re.findall(r"(\d+\.?\d*)", score_chunk)
-                score = nums[0] if nums else "N/A"
+        score_match = re.search(r"Score[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
+        if score_match: score = score_match.group(1)
 
-        # Sentiment bepaling
+        # 2. Trade Quality (Vaak aangeduid als 'Quality' of 'Trade Quality')
+        quality = "N/A"
+        quality_match = re.search(r"Quality[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
+        if quality_match: quality = quality_match.group(1)
+
+        # 3. Sentiment
         sentiment = "Neutral"
         if "BULLISH" in full_text.upper(): sentiment = "Bullish 📈"
-        if "BEARISH" in full_text.upper(): sentiment = "Bearish 📉"
+        elif "BEARISH" in full_text.upper(): sentiment = "Bearish 📉"
+
+        # 4. Support & Resistance
+        support = "N/A"
+        resistance = "N/A"
+        sup_match = re.search(r"support\s+(?:at|is)\s+([\d\.]+)", full_text, re.IGNORECASE)
+        res_match = re.search(r"resistance\s+(?:at|is)\s+([\d\.]+)", full_text, re.IGNORECASE)
+        if sup_match: support = sup_match.group(1)
+        if res_match: resistance = res_match.group(1)
 
         return {
             "Symbool": symbol,
             "Score": score,
+            "Trade Quality": quality,
             "Sentiment": sentiment,
-            "Link": url
+            "Support": support,
+            "Resistance": resistance
         }
     except Exception as e:
-        return {"Symbool": symbol, "Score": "Fout", "Sentiment": str(e)[:20], "Link": url}
+        return {"Symbool": symbol, "Score": "Error", "Trade Quality": "Error", "Sentiment": "Error", "Support": "-", "Resistance": "-"}
 
-# --- UI ---
-st.title("🚀 StockConsultant Batch Scanner")
-st.write("Voer de symbolen in die je wilt controleren.")
+# --- UI DASHBOARD ---
+st.title("🚀 Advanced Stock Scanner")
+st.markdown("Analyseer Score, Trade Quality en Prijsniveaus van StockConsultant.")
 
-input_symbols = st.text_input("Symbolen (scheid met komma's):", "PAYO, TSLA, AAPL")
+input_symbols = st.text_input("Voer symbolen in (scheid met komma's):", "PAYO, TSLA, AAPL")
 symbol_list = [s.strip().upper() for s in input_symbols.split(",") if s.strip()]
 
-if st.button("Start Analyse"):
+if st.button("Start Volledige Analyse"):
     driver = get_driver()
-    results = []
+    all_results = []
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     for idx, sym in enumerate(symbol_list):
-        status_text.text(f"Bezig met ophalen van {sym}...")
-        data = get_stock_data(driver, sym)
-        results.append(data)
+        status_text.text(f"Bezig met scannen van {sym}...")
+        data = get_detailed_stock_data(driver, sym)
+        all_results.append(data)
         progress_bar.progress((idx + 1) / len(symbol_list))
     
-    status_text.text("Scan voltooid!")
+    status_text.text("Analyse voltooid!")
     
-    # Resultaten tonen
-    df = pd.DataFrame(results)
+    # DataFrame maken
+    df = pd.DataFrame(all_results)
     st.divider()
     
-    # Tabel met styling
-    st.dataframe(df, use_container_width=True)
-    
-    # Download optie
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("Download als CSV", csv, "stocks.csv", "text/csv")
-else:
-    st.info("Vul symbolen in en klik op de knop.")
+    # Tabel tonen met interactieve functies
+    st.subheader("Overzicht Marktan
 
-st.divider()
-st.caption("Opmerking: Deze tool werkt het beste als de symbolen correct zijn gespeld.")
 
