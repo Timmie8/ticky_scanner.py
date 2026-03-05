@@ -2,16 +2,14 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import time
 import re
 import pandas as pd
 
-# --- CONFIGURATIE ---
+# --- PAGINA CONFIG ---
 st.set_page_config(page_title="Stock Scanner Pro", layout="wide")
 
+# --- DE VERBETERDE BROWSER SETUP ---
 @st.cache_resource
 def get_driver():
     options = Options()
@@ -19,38 +17,37 @@ def get_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    # Vermom de bot als een echte browser
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-    options.binary_location = "/usr/bin/chromium"
-    service = Service("/usr/bin/chromedriver")
-    return webdriver.Chrome(service=service, options=options)
-
-def get_detailed_stock_data(driver, symbol):
-    url = f"https://www.stockconsultant.com/consultnow/basicplus.cgi?symbol={symbol}&extot=1&searcht=1&srng=0,10&charts=1&fselect=sscroll#lsearch"
     
+    # We laten Selenium zelf de driver koppelen aan de browser in /usr/bin/chromium
+    # Dit voorkomt de SessionNotCreatedException
     try:
-        # Stel een harde timeout in voor het laden van de pagina zelf
-        driver.set_page_load_timeout(20)
+        service = Service() # Selenium 4.x vindt de driver nu vaak zelf op Linux
+        driver = webdriver.Chrome(service=service, options=options)
+        return driver
+    except Exception:
+        # Backup plan voor specifieke Linux paden
+        options.binary_location = "/usr/bin/chromium"
+        service = Service("/usr/bin/chromedriver")
+        return webdriver.Chrome(service=service, options=options)
+
+def scrape_stock(driver, symbol):
+    url = f"https://www.stockconsultant.com/consultnow/basicplus.cgi?symbol={symbol}&extot=1&searcht=1&srng=0,10&charts=1&fselect=sscroll#lsearch"
+    try:
         driver.get(url)
+        time.sleep(6) # CGI sites hebben tijd nodig
         
-        # Wacht tot de body er is, maar maximaal 10 seconden
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        body_text = driver.find_element("tag name", "body").text
         
-        # Korte pauze voor de dynamische tabellen
-        time.sleep(4) 
+        # Extractie data
+        score = re.search(r"Score[:\s]*(\d+\.?\d*)", body_text, re.IGNORECASE)
+        quality = re.search(r"Quality[:\s]*(\d+\.?\d*)", body_text, re.IGNORECASE)
+        support = re.search(r"support\s+(?:at|is)\s+([\d\.]+)", body_text, re.IGNORECASE)
+        resistance = re.search(r"resistance\s+(?:at|is)\s+([\d\.]+)", body_text, re.IGNORECASE)
         
-        full_text = driver.find_element(By.TAG_NAME, "body").text
-        
-        # Data Extractie met Regex
-        score = re.search(r"(?:Score|Technical Score)[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
-        quality = re.search(r"(?:Quality|Trade Quality)[:\s]*(\d+\.?\d*)", full_text, re.IGNORECASE)
-        support = re.search(r"support\s+(?:at|is)\s+([\d\.]+)", full_text, re.IGNORECASE)
-        resistance = re.search(r"resistance\s+(?:at|is)\s+([\d\.]+)", full_text, re.IGNORECASE)
-
         sentiment = "Neutral"
-        if "BULLISH" in full_text.upper(): sentiment = "Bullish 📈"
-        elif "BEARISH" in full_text.upper(): sentiment = "Bearish 📉"
-
+        if "BULLISH" in body_text.upper(): sentiment = "Bullish 📈"
+        elif "BEARISH" in body_text.upper(): sentiment = "Bearish 📉"
+        
         return {
             "Symbool": symbol,
             "Score": score.group(1) if score else "N/A",
@@ -60,38 +57,42 @@ def get_detailed_stock_data(driver, symbol):
             "Resistance": resistance.group(1) if resistance else "N/A"
         }
     except Exception as e:
-        return {"Symbool": symbol, "Score": "Timeout/Error", "Trade Quality": "-", "Sentiment": "N/A", "Support": "-", "Resistance": "-"}
+        return {"Symbool": symbol, "Score": "N/A", "Trade Quality": "Error", "Sentiment": "Error", "Support": "-", "Resistance": "-"}
 
 # --- UI ---
-st.title("🛡️ StockConsultant Batch Analysis")
+st.title("📊 StockConsultant Advanced Scanner")
 
-input_symbols = st.text_input("Voer symbolen in (gescheiden door komma):", "PAYO, TSLA")
+input_symbols = st.text_input("Vul symbolen in (bijv. PAYO, TSLA):", "PAYO")
 symbol_list = [s.strip().upper() for s in input_symbols.split(",") if s.strip()]
 
-if st.button("Start Analyse"):
-    if not symbol_list:
-        st.error("Voer eerst symbolen in.")
-    else:
-        driver = get_driver()
-        all_results = []
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        for idx, sym in enumerate(symbol_list):
-            status_text.text(f"Scannen: {sym} ({idx+1}/{len(symbol_list)})...")
-            data = get_detailed_stock_data(driver, sym)
-            all_results.append(data)
-            progress_bar.progress((idx + 1) / len(symbol_list))
-        
-        status_text.text("✅ Scan voltooid!")
-        df = pd.DataFrame(all_results)
-        st.dataframe(df, use_container_width=True)
-        
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("Download CSV", csv, "report.csv", "text/csv")
-else:
-    st.info("Wachtend op start...")
+if st.button("Start Scan"):
+    if symbol_list:
+        with st.spinner("Browser opstarten en data ophalen..."):
+            try:
+                driver = get_driver()
+                results = []
+                progress = st.progress(0)
+                
+                for i, sym in enumerate(symbol_list):
+                    st.write(f"Scannen van {sym}...")
+                    data = scrape_stock(driver, sym)
+                    results.append(data)
+                    progress.progress((i + 1) / len(symbol_list))
+                
+                df = pd.DataFrame(results)
+                
+                # Automatisch sorteren op Trade Quality (hoogste eerst)
+                df['Trade Quality'] = pd.to_numeric(df['Trade Quality'], errors='coerce')
+                df = df.sort_values(by="Trade Quality", ascending=False)
 
-st.divider()
-st.caption("Gebruik kleine batches (max 5-10) voor de beste snelheid op Streamlit Cloud.")
+                st.success("Scan voltooid!")
+                st.dataframe(df, use_container_width=True)
+                
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button("Download CSV", csv, "stock_data.csv", "text/csv")
+                
+            except Exception as e:
+                st.error(f"Fout bij opstarten browser: {e}")
+    else:
+        st.warning("Voer eerst een symbool in.")
+
