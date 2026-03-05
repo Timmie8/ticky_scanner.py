@@ -2,63 +2,70 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 
-# Pagina instellingen
-st.set_page_config(page_title="Ticky Score Dashboard", layout="wide")
+# --- PAGINA CONFIGURATIE ---
+st.set_page_config(page_title="Ticky Dashboard", page_icon="📈", layout="centered")
 
-st.title("📈 Trade-Ideas Ticky Dashboard")
-st.subheader("Haal live scores op zonder de website te bezoeken")
-
-# Chrome opties configureren voor Cloud omgeving
+# --- BROWSER SETUP ---
 @st.cache_resource
 def get_driver():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
+    """Initialiseert een headless Chrome browser voor Streamlit Cloud."""
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     
-    # Gebruik webdriver-manager om de juiste driver te installeren
-    service = Service(ChromeDriverManager().install())
-    return webdriver.Chrome(service=service, options=chrome_options)
+    # Op Streamlit Cloud staan de binaries op deze vaste locaties:
+    options.binary_location = "/usr/bin/chromium"
+    service = Service("/usr/bin/chromedriver")
+    
+    return webdriver.Chrome(service=service, options=options)
 
-# Initialiseer de browser
-driver = get_driver()
+# --- DASHBOARD UI ---
+st.title("📊 Trade-Ideas Ticky Scanner")
+st.markdown("""
+Voer een aandeel-symbool in om de live score op te halen van de Trade-Ideas Ticky tool.
+""")
 
-# Input gedeelte
-col1, col2 = st.columns([2, 1])
-with col1:
-    symbol = st.text_input("Voer een aandeel symbool in (bijv. NVDA, TSLA):", "").upper()
+# Inputveld voor de gebruiker
+symbol = st.text_input("Aandeel Symbool (bijv. AAPL, TSLA, NVDA):", "").upper()
 
 if symbol:
+    # Start de browser via de gecachte functie
+    driver = get_driver()
+    
     with st.spinner(f"Bezig met ophalen van data voor {symbol}..."):
         try:
+            # Ga naar de URL
             url = f"https://www.trade-ideas.com/ticky/ticky.html?symbol={symbol}"
             driver.get(url)
             
-            # Wacht 3 seconden zodat de JavaScript de score kan laden
+            # Wacht 3 seconden tot de JavaScript de score heeft berekend
             time.sleep(3)
             
-            # Pak de tekst van de gehele body
-            raw_text = driver.find_element("tag name", "body").text
+            # Zoek de tekst op de pagina
+            page_content = driver.find_element("tag name", "body").text
             
-            # Dashboard weergave
-            st.success(f"Resultaten voor {symbol}")
-            
-            # We maken een mooie box voor de ruwe data
-            st.info("### Gevonden Score Data:")
-            st.code(raw_text, language="text")
-            
-            # Optioneel: Directe link als backup
-            st.markdown(f"[Klik hier om de bron te bekijken]({url})")
-            
-        except Exception as e:
-            st.error(f"Er is een fout opgetreden: {e}")
-else:
-    st.info("Voer hierboven een symbool in om te beginnen.")
+            if page_content.strip() == "":
+                st.warning("De pagina is geladen, maar lijkt leeg te zijn. Controleer of het symbool correct is.")
+            else:
+                st.subheader(f"Resultaten voor {symbol}")
+                
+                # We tonen de data in een mooie 'Card' stijl
+                st.info(f"**Gevonden Data:**\n\n{page_content}")
+                
+                # Bonus: Een directe link voor de gebruiker
+                st.markdown(f"[Bekijk originele bron op Trade-Ideas]({url})")
 
-# Footer
+        except Exception as e:
+            st.error(f"Er is een fout opgetreden tijdens het scrapen: {e}")
+            st.info("Tip: Controleer of je `packages.txt` correct is geüpload naar GitHub.")
+
+else:
+    st.write("Wachtend op invoer...")
+
+# --- FOOTER ---
 st.divider()
-st.caption("Gebouwd met Python, Selenium en Streamlit.")
+st.caption("Deze tool gebruikt Selenium in headless mode op een Streamlit Cloud server.")
