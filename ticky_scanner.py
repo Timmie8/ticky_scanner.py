@@ -2,14 +2,12 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.core.os_manager import ChromeType
 import time
+import re
 
-# --- PAGINA CONFIGURATIE ---
-st.set_page_config(page_title="Ticky Dashboard", page_icon="📈")
+# --- CONFIGURATIE ---
+st.set_page_config(page_title="Ticky Dashboard", layout="centered")
 
-# --- BROWSER SETUP ---
 @st.cache_resource
 def get_driver():
     options = Options()
@@ -17,43 +15,67 @@ def get_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    
-    # Gebruik ChromeType.CHROMIUM voor Linux/Streamlit omgevingen
-    # Dit installeert automatisch de juiste driver voor de Chromium browser
-    service = Service(ChromeDriverManager(chrome_type=ChromeType.CHROMIUM).install())
-    
+    options.binary_location = "/usr/bin/chromium"
+    service = Service("/usr/bin/chromedriver")
     return webdriver.Chrome(service=service, options=options)
 
-# --- DASHBOARD UI ---
-st.title("📊 Trade-Ideas Ticky Scanner")
+def extract_score(text):
+    """
+    Zoekt naar een getal in de tekst (bijv. '7.5' of '-2.1').
+    """
+    # Zoek naar getallen (ook negatief en met decimalen)
+    numbers = re.findall(r"[-+]?\d*\.\d+|\d+", text)
+    if numbers:
+        return float(numbers[0])
+    return None
 
-symbol = st.text_input("Aandeel Symbool (bijv. AAPL):", "").upper()
+# --- UI ---
+st.title("📈 Ticky Score Dashboard")
+symbol = st.text_input("Voer symbool in (bijv. TSLA):", "").upper()
 
 if symbol:
     try:
         driver = get_driver()
-        with st.spinner(f"Gegevens ophalen voor {symbol}..."):
+        with st.spinner(f"Analyseert {symbol}..."):
             url = f"https://www.trade-ideas.com/ticky/ticky.html?symbol={symbol}"
             driver.get(url)
-            
-            # Wacht op de JavaScript berekening van Trade-Ideas
             time.sleep(5) 
             
-            # Haal de tekst op uit de body
             page_content = driver.find_element("tag name", "body").text
-            
-            if page_content:
-                st.success(f"Resultaat voor {symbol}")
-                st.info(f"**Gevonden Data:**\n\n{page_content}")
+            score = extract_score(page_content)
+
+            if score is not None:
+                st.subheader(f"Resultaat voor {symbol}")
+                
+                # Kleur bepalen op basis van score
+                color = "normal"
+                if score > 2:
+                    color = "inverse" # Groenachtig in Streamlit
+                elif score < -2:
+                    color = "off" # Roodachtig/Grijs
+                
+                # De mooie Dashboard Widget
+                col1, col2 = st.columns(2)
+                col1.metric(label="Ticky Score", value=f"{score}", delta=score)
+                
+                # Visuele indicator
+                if score > 0:
+                    st.success(f"De sentiment score voor {symbol} is Positief.")
+                else:
+                    st.error(f"De sentiment score voor {symbol} is Negatief.")
+                
+                with st.expander("Bekijk ruwe data"):
+                    st.write(page_content)
             else:
-                st.warning("Geen data gevonden. Is het symbool correct?")
+                st.warning("Pagina geladen, maar geen score kunnen extraheren.")
+                st.write("Ruwe tekst gevonden:", page_content)
                 
     except Exception as e:
-        st.error("Er is een probleem met de browserverbinding.")
-        st.exception(e) # Dit toont de volledige foutmelding voor debugging
+        st.error("Er is een fout opgetreden.")
+        st.exception(e)
 else:
-    st.write("Voer een symbool in om de scan te starten.")
+    st.info("Voer een symbool in om de live score te zien.")
 
 st.divider()
-st.caption("Draait op Streamlit Cloud met Selenium & Chromium")
+st.caption("Data afkomstig van Trade-Ideas Ticky Tool")
 
